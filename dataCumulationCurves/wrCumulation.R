@@ -29,12 +29,15 @@ options(stringsAsFactors=F)
 
 ##setting the paths of various directories
 ##local machine
-projCodeDir <- "/Users/mdl5548/Documents/GitHub/waterRightsCumulationCurves/"
-projBoxDir <- "/Users/mdl5548/Library/CloudStorage/GoogleDrive-mdl5548@psu.edu/Shared drives/PCHES_Project1.2/Water rights project/Water institutions/Data/waterRightsCumulations/"
+#projCodeDir <- "/Users/mdl5548/Documents/GitHub/waterRightsCumulationCurves/"
+#projBoxDir <- "/Users/mdl5548/Library/CloudStorage/GoogleDrive-mdl5548@psu.edu/Shared drives/PCHES_Project1.2/Water rights project/Water institutions/Data/waterRightsCumulations/"
 ##parallels machine
-#projCodeDir <- "/media/psf/Home/Documents/GitHub/waterRightsCumulationCurves/"
-#projBoxDir <- "/media/psf/Home/Library/CloudStorage/GoogleDrive-mdl5548@psu.edu/Shared drives/PCHES_Project1.2/Water rights project/Water institutions/Data/waterRightsCumulations/"
+##to access:
+##singularity shell --bind '/media/psf/Home/Library/cloudStorage/GoogleDrive-mdl5548@psu.edu/Shared drives/PCHES_Project1.2/Water rights project/Water institutions/Data/waterRightsCumulations':/dataDir,/media/psf/Home/Documents/GitHub/waterRightsCumulationCurves:/codeDir ./waterRightAnalysis.sif
+projCodeDir <- "/codeDir/"
+projBoxDir <- "/dataDir/"
 dataDir <- paste0(projBoxDir, "output/")
+
 
 ##load libraries
 library(rgeos)
@@ -63,7 +66,7 @@ load(reorgWaterRights)
 
 ##check for the oldest and most recent priority years
 ##This is used to determine the beginning and ending years for the cumulation
-##first, set up some empty objects to recieve data data
+##first, set up some empty objects to receive output data
 chkMinSur <- c()
 chkMaxSur <- c()
 chkMinGrd <- c()

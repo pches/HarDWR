@@ -1,0 +1,65 @@
+# Last modified 1 December 2020 by Robert Nicholas <ren10@psu.edu>.
+
+Bootstrap: library
+From: debian:10
+
+
+%environment
+    SINGULARITYENV_PS1='\n\[\033[01;33m\][`basename ${SINGULARITY_CONTAINER} .simg`]\[\033[00m\] \[\033[01;34m\]\w\[\033[00m\] \$ '
+
+
+%post
+    # fix package sources
+    echo "deb http://ftp.debian.org/debian buster main contrib non-free" > /etc/apt/sources.list
+    echo "deb http://ftp.debian.org/debian buster-backports main contrib non-free" >> /etc/apt/sources.list
+    echo "deb http://deb.debian.org/debian-security/ buster/updates main contrib non-free" >> /etc/apt/sources.list
+    echo "deb http://deb.debian.org/debian buster-updates main contrib non-free" >> /etc/apt/sources.list
+
+    # upgrade packages in base image
+    DEBIAN_FRONTEND=noninteractive apt-get update && apt-get -y dist-upgrade
+
+    # install additional packages#
+    DEBIAN_FRONTEND=noninteractive apt-get -y install vim joe mc wget htop
+    DEBIAN_FRONTEND=noninteractive apt-get -y install hugo pandoc pandoc-citeproc texlive-latex-recommended
+#    DEBIAN_FRONTEND=noninteractive apt-get -y install build-essential gfortran r-base python3-scipy
+    DEBIAN_FRONTEND=noninteractive apt-get -y install build-essential r-base r-base-dev software-properties-common dirmngr apt-transport-https lsb-release ca-certificates
+    DEBIAN_FRONTEND=noninteractive apt-get -y install libgdal-dev libgeos++-dev libudunits2-dev libproj-dev libx11-dev libgl1-mesa-dev libglu1-mesa-dev libfreetype6-dev libnode-dev libxt-dev libfftw3-dev
+#    DEBIAN_FRONTEND=noninteractive apt-get -y install cdo nco ncl-ncarg
+
+    # clean up orphaned packages and delete installed .deb files
+    DEBIAN_FRONTEND=noninteractive apt-get -y autoremove
+    DEBIAN_FRONTEND=noninteractive apt-get -y clean
+
+    # install some R packages
+    R -e "install.packages('rgeos', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('rgdal', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('readxl', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('maptools', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('pbapply', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('parallel', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('doParallel', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('sf', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('measurements', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('knitr', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('lubridate', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('plyr', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('dplyr', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('tidyr', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('zoo', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('gdata', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('BBmisc', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('reshape2', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('ggplot2', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('ggfortify', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('ggthemes', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('ggrepel', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('classInt', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('usdata', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('spatialEco', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('broom', dependencies=T, repos=c('https://cloud.r-project.org','http://cran.rstudio.com'))"
+    R -e "install.packages('https://cran.r-project.org/src/contrib/Archive/terra/terra_1.7-23.tar.gz', dependencies=T, type='source', repos=NULL)"
+    R -e "install.packages('https://cran.r-project.org/src/contrib/Archive/raster/raster_3.5-15.tar.gz', dependencies=T, type='source', repos=NULL)"
+
+
+%runscript
+    exec /bin/bash "$@"
