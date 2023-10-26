@@ -1,6 +1,6 @@
 # HarDWR - Harmonized Database of Western U.S. Water Rights
 ## Description
-This repository contains the code which was used to create the HarDWR datasets. In summary, raw water rights data was collected from 11 states in the Western United States. The water right records when through several quality control tests, and then were harmonized into a single dataset to be consistent across all states. More specific details on data collection, quality control, and harmonization are described in Lisk et al. (*submission pending*). These data were instrumental in conducting a study of the multi-sector dynamics of intersectoral water allocation changes through water markets (Grogan et al., *in review*). The datasets are available here:
+This repository contains the code which was used to create the HarDWR datasets. In summary, raw water rights data was collected from 11 states in the Western United States. The water right records when through several quality control tests, and then were harmonized into a single dataset to be consistent across all states. More specific details on data collection, quality control, and harmonization are described in Lisk et al. (*in review*). These data were instrumental in conducting a study of the multi-sector dynamics of intersectoral water allocation changes through water markets (Grogan et al., *in review*). The datasets are available here:
 
 HarDWR Raw Data: https://data.msdlive.org/records/8y9nq-bdt52
 
@@ -19,7 +19,7 @@ The code available here are divided into subdirectories based on which dataset t
 
 ### dataHarmonization
 
-`wrDataHarmonization.R` - This script reads in the raw water rights data and preforms the harmonization of the records. It is organized into sections by state, as the data each state had their own unique challenges to be harmonized. See List et al. (*submission pending*) for more details. It can be noted that a user may change the number and which states to run the harmonization for by editing a single variable, *states*. The reason for this is to make the processing easier in case a user may not want to run all 11 states.
+`wrDataHarmonization.R` - This script reads in the raw water rights data and preforms the harmonization of the records. It is organized into sections by state, as the data each state had their own unique challenges to be harmonized. See Lisk et al. (*in review*) for more details. It can be noted that a user may change the number and which states to run the harmonization for by editing a single variable, *states*. The reason for this is to make the processing easier in case a user may not want to run all 11 states.
 
 `wrDataHarmonization_CustomFunctions.R` - A supporting file for `wrDataHarmonization.R` which contains all the required custom written functions for the main script.
 
@@ -40,3 +40,8 @@ The final section of the script creates a series of summary images from the resu
 
 
 ## Citations
+
+Grogan, D. *et al*. Bringing hydrologic realism to water markets. (in review).
+
+Lisk, M. *et al*. Harmonized Database of Western U.S Water Rights (HarDWR) v.1. (in review).
+
