@@ -29,22 +29,22 @@ options(stringsAsFactors=F)
 
 ##setting the paths of various directories
 ##local machine
-#projCodeDir <- "/Users/mdl5548/Documents/GitHub/waterRightsCumulationCurves/"
-#projBoxDir <- "/Users/mdl5548/Library/CloudStorage/GoogleDrive-mdl5548@psu.edu/Shared drives/PCHES_Project1.2/Water rights project/Water institutions/Data/waterRightsCumulations/"
+#projCodeDir <- ""
+#projBoxDir <- ""
 ##parallels machine
-##to access:
-##singularity shell --bind '/media/psf/Home/Library/cloudStorage/GoogleDrive-mdl5548@psu.edu/Shared drives/PCHES_Project1.2/Water rights project/Water institutions/Data/waterRightsCumulations':/dataDir,/media/psf/Home/Documents/GitHub/waterRightsCumulationCurves:/codeDir ./waterRightAnalysis.sif
 projCodeDir <- "/codeDir/"
 projBoxDir <- "/dataDir/"
 dataDir <- paste0(projBoxDir, "output/")
 
 
 ##load libraries
+.libPaths("/Rlib")  ##required to load libraries from within the container
 library(rgeos)
 library(rgdal)
 library(maptools)
 library(knitr)
 library(lubridate)
+library(stringr)
 library(dplyr)
 library(tidyr)
 library(BBmisc)
@@ -59,7 +59,7 @@ library(parallel)
 ##source custom functions
 source(paste0(projCodeDir, "wrCumulation_CustomFunctions.R"))
 
-##load cleaned water rights data
+##load cleaned water rights data - Available at https://doi.org/10.57931/2341234
 ##to be used to cumulate the water flows by WMAs
 reorgWaterRights <- list.files(paste0(dataDir, "reorganizedData/"), "stateWaterRightsHarmonized.RData", recursive=T, full.names=T)
 load(reorgWaterRights)
@@ -169,7 +169,10 @@ mapply(function(st, wmaID, wrtg, wrpg, wrts, wrps){
                                                                       checkRmLead<-gsub("(?<![0-9])0+","",wID,perl=T)
                                                                       getWMANum<-stTrans$ID[stTrans$basinNum==checkRmLead]
                                                                     }
-                                                                    return(getWMANum)});
+                                                                    return(as.character(getWMANum))});
+                  ##check to make sure that, if leading 0's are missing, to add in the leading 0's
+                  transWMANum <- str_pad(transWMANum, 3, side="left", pad="0")
+                  
                   ##It should be noted that New Mexico has three wmaIDs that do not match up with geographic boundaries: LWD, SP, SD.
                   ##This creates output files for them, but were manually deleted before handing off to UNH.
                   

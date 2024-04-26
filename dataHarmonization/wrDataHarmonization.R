@@ -31,11 +31,9 @@ options(stringsAsFactors=F, scipen=999)
 ##setting the paths of various directories, including where to read in
 ##data, additional code, and were to write the formatted data to
 ##local machine
-#projCodeDir <- "/Users/mdl5548/Documents/GitHub/waterRightsCumulationCurves/"
-#projBoxDir <- "/Users/mdl5548/Library/CloudStorage/GoogleDrive-mdl5548@psu.edu/Shared drives/PCHES_Project1.2/Water rights project/Water institutions/Data/waterRightsCumulations/"
-##parallels machine
-##to access:
-##singularity shell --bind '/media/psf/Home/Library/cloudStorage/GoogleDrive-mdl5548@psu.edu/Shared drives/PCHES_Project1.2/Water rights project/Water institutions/Data/waterRightsCumulations':/dataDir,/media/psf/Home/Documents/GitHub/waterRightsCumulationCurves:/codeDir ./waterRightAnalysis.sif
+#projCodeDir <- ""
+#projBoxDir <- ""
+##singularity container
 projCodeDir <- "/codeDir/"
 projBoxDir <- "/dataDir/"
 dataDir <- paste0(projBoxDir, "inputData/")
@@ -44,6 +42,7 @@ outDir <- paste0(projBoxDir, "output/")
 if(dir.exists(outDir)==F){dir.create(outDir)} 
 
 ##load libraries
+.libPaths("/Rlib")  ##required to load libraries from within the container
 library(rgeos)
 library(rgdal)
 library(maptools)
@@ -83,6 +82,21 @@ if(stateWMAs@proj4string@projargs!=projProj@projargs){
   stateWMAs <- spTransform(stateWMAs, projProj)
 }
 
+##a variable to determine is the harmonized data should be exported 
+##as .csv or .shp
+exportWrite <- T
+##create directories if exportWrite==TRUE
+if(exportWrite==T){
+  exportDir <- paste0(outDir, "stateWaterRightsHarmonized/")
+  ##make sure each state has their own subdirectory
+  stateExpDirs <- c()
+  for(i in 1:length(states)){
+    stDir <- paste0(exportDir, states[i], "/")
+    if(dir.exists(stDir)==F){dir.create(stDir, recursive=T)}
+    stateExpDirs[i] <- stDir
+  }
+}
+
 ##########################################################################
 ##prepare the data for various states
 ##Idaho
@@ -113,7 +127,7 @@ if("idaho" %in% states){
   names(projh2oDiv)[match(c("RightID","BasinNumbe","Source"), names(projh2oDiv))] <- c(waterRightIDFieldName, basinIDFieldName, "source")
   h2oDiv <- projh2oDiv@data
   
-  ##idaho WMAs
+  ##Idaho WMAs
   spatialWMAByState[[whichState]] <- stateWMAs[stateWMAs$state=="Idaho",]
   wmaStateLabel[[whichState]] <- "WMA"
   
@@ -169,7 +183,7 @@ if("idaho" %in% states){
   h2oRights$VersionNum   <- as.numeric(as.character(h2oRights$VersionNum)) ##change from factor to numeric
   h2oRights <- bind_rows(h2oRights, fedUse)
   
-  ##get ride of NA rows from the supplimental data
+  ##get rid of NA rows from the supplimental data
   supRights <- supRights[-c(which(is.na(supRights$WaterRight.x)==T)),]
   
   ##Format data to be numeric and fill in empty cells with NA
@@ -184,14 +198,27 @@ if("idaho" %in% states){
   nonDup <- filter(h2oRights, duplicated(h2oRights$WaterRight.x)==F)
   
   fullRights <- merge(supRights, nonDup, by="WaterRight.x", all=T)
+  ##re-preform the non-duplication, as the above merging added copied records
+  fullRights <- fullRights[is.na(fullRights$waterRightID)==F,]
+  fullRights <- filter(fullRights, duplicated(fullRights$waterRightID)==F)
+  
+  ##subset columns to only those needed to proceed
   fullRights <- fullRights[,c(waterRightIDFieldName, "basinNum.x", "PriorityDa.x", "OverallMax", "source.x", "WaterUse", "Volume")]
   colnames(fullRights) <- c(waterRightIDFieldName, basinIDFieldName, "priorityDate", "CFS", "source", "origWaterUse", "volume")
+  
+  ##make sure there are no negative CFS values
   fullRights <- fullRights[fullRights$CFS>=0,]
-  ##remove invalid water rights (waterRightID==NA or source=NA)
-  fullRights <- fullRights[is.na(fullRights$waterRightID)==F,]
+  
+  ##remove invalid source
   fullRights <- fullRights[is.na(fullRights$source)==F,]
+  
+  ##remove invalid priority date
   fullRights <- fullRights[is.na(fullRights$priorityDate)==F,]
+  
+  ##remove invalid WMA
   fullRights <- fullRights[is.na(fullRights$basinNum)==F,]
+  
+  ##setting distinction between ground and surface water
   fullRights$source[fullRights$source!="GROUND WATER"] <- "SURFACE WATER"
   fullRights$waterUse <- NA
   ##preform sector matching now instead of later  
@@ -201,6 +228,13 @@ if("idaho" %in% states){
     subIDTab <- idSectorMatch[idSectorMatch$sector==sc,]
     fullRights$waterUse[grep(paste(subIDTab$character,collapse="|"), as.character(fullRights$origWaterUse))] <- sc
   }
+  
+  ##add a few more columns, for convenience
+  fullRights$state <- "Idaho"
+  fullRights$FIPS <- "16"
+  ##reorganize the rights for easier readability
+  fullRights <- fullRights[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
+  
   fullRightsRecs[[whichState]] <- fullRights
   fullWMAs <- as.numeric(unique(fullRights$basinNum))
   wmaIDByState[[whichState]] <- fullWMAs[is.na(fullWMAs)==F]
@@ -215,6 +249,21 @@ if("idaho" %in% states){
   ##adds to the object to be passed along for analysis
   rightsByState_ground[[whichState]] <- fullRights[fullRights$source=="GROUND WATER",]
   rightsByState_surface[[whichState]] <- fullRights[fullRights$source=="SURFACE WATER",]
+  
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(fullRights, paste0(stExpDir, "idFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(fullRights[fullRights$source=="SURFACE WATER",], paste0(stExpDir, "idSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(fullRights[fullRights$source=="GROUND WATER",], paste0(stExpDir, "idGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(projh2oDiv, dsn=stExpDir, layer="idStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+    ##write out spatial POUs
+    writeOGR(projh2oUse, dsn=stExpDir, layer="idStatePOU", driver="ESRI Shapefile", overwrite_layer=T)
+  }
 }
 ##Washington
 if("washington" %in% states){
@@ -222,6 +271,13 @@ if("washington" %in% states){
   stateDataDir <- paste0(dataDir, "washington/")
   whichState <- which(states=="washington")
   plottingDim[[whichState]] <- "wide"
+  
+  h2oUseShp <- readOGR(dsn="/dataDir/inputData_v2/washington//GWIS_Data/GWIS_SDEexport_asShapefiles", layer="WR_Doc_POU1")
+  
+  listFiles <- list.files(stateDataDir, ".csv", full.names=T, recursive=T)
+  h2oDiv <- read.csv(listFiles[3])
+  h2oDPt <- read.csv(listFiles[1])
+  
   
   ##Contents of the GWIS_Data geodatabase
   ##D_Point - feature class, https://fortress.wa.gov/ecy/gispublic/DataDownload/wr/GWIS_Data/GWIS_Data_Dictionary/code01.html
@@ -276,6 +332,7 @@ if("washington" %in% states){
   ##remove records with no valid record identifies (WR.Doc.ID==NA), and subset columns by only those needed
   regionData <- regionData[is.na(regionData$WR.Doc.ID)==F, c("WR.Doc.ID", "Priority.Date.Claim.First.Use", "WRIA")]
   
+  ##only proceeding with Div records, as Use records do not include water use (purposes)
   ##merge the diversion and region records into one table
   h2oRights <- merge(x=h2oDiv, y=regionData, by.x=waterRightIDFieldName, by.y="WR.Doc.ID")
   ##remove duplicated rights, biasing the first records as with Idaho
@@ -309,6 +366,12 @@ if("washington" %in% states){
   fullWRIAs <- as.numeric(unique(nonDupRights$basinNum))
   wmaIDByState[[whichState]] <- fullWRIAs[is.na(fullWRIAs)==F]
   
+  ##add a few more columns, for convenience
+  nonDupRights$state <- "Washington"
+  nonDupRights$FIPS <- "53"
+  ##reorganize the rights for easier readability
+  nonDupRights <- nonDupRights[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
+  
   ##for the spatial object to be passed on for plotting, only include those records which will be used in the analysis
   subProjUse <- projh2oUse[which(projh2oUse$waterRightID %in% nonDupRights$waterRightID),]
   subProjDiv <- projh2oDiv[which(projh2oDiv$waterRightID %in% nonDupRights$waterRightID),]
@@ -324,6 +387,21 @@ if("washington" %in% states){
   ##adds to the object to be passed along for analysis
   rightsByState_ground[[whichState]] <- nonDupRights[which(nonDupRights$source=="GROUND WATER"),]
   rightsByState_surface[[whichState]] <- nonDupRights[which(nonDupRights$source=="SURFACE WATER"),]
+  
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(nonDupRights, paste0(stExpDir, "waFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(nonDupRights[nonDupRights$source=="SURFACE WATER",], paste0(stExpDir, "waSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(nonDupRights[nonDupRights$source=="GROUND WATER",], paste0(stExpDir, "waGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(projh2oDiv, dsn=stExpDir, layer="waStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+    ##write out spatial POUs
+    writeOGR(projh2oUse, dsn=stExpDir, layer="waStatePOU", driver="ESRI Shapefile", overwrite_layer=T)
+  }
 }
 ##Oregon
 if("oregon" %in% states){
@@ -375,6 +453,13 @@ if("oregon" %in% states){
   ##adding water use of the rights for later processing
   h2oDiv <- merge(x=h2oDiv, y=sectorTab, by.x="origWaterUse", by.y="Code", sort=F)
   h2oDiv <- h2oDiv[h2oDiv$CFS>=0,]
+  
+  ##add a few more columns, for convenience
+  h2oDiv$state <- "Oregon"
+  h2oDiv$FIPS <- "41"
+  ##reorganize the rights for easier readability
+  h2oDiv <- h2oDiv[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
+  
   fullRightsRecs[[whichState]] <- h2oDiv
   wmaIDByState[[whichState]] <- as.numeric(unique(h2oDiv$basinNum))
   
@@ -385,6 +470,19 @@ if("oregon" %in% states){
   ##need to rename source to work with plotting code
   rightsByState_ground[[whichState]] <- h2oDiv[which(h2oDiv$source=="GROUND WATER"),]
   rightsByState_surface[[whichState]] <- h2oDiv[which(h2oDiv$source=="SURFACE WATER"),]
+  
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(h2oDiv, paste0(stExpDir, "orFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(h2oDiv[h2oDiv$source=="SURFACE WATER",], paste0(stExpDir, "orSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(h2oDiv[h2oDiv$source=="GROUND WATER",], paste0(stExpDir, "orGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(projh2oDiv, dsn=stExpDir, layer="orStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+  }
 }
 ##California
 if("california" %in% states){
@@ -419,20 +517,75 @@ if("california" %in% states){
   ##rename columns to standard names
   colnames(h2oDivCountyRecs) <- colnames(h2oDivUseRecs) <- colnames(h2oDivEntityRecs) <- colnames(h2oDivWatershedRecs) <- c(waterRightIDFieldName, "origWaterUse", "CFS", "CFS_units", "priorityDate", "basinName", "source", "latitude", "longitude")
   
-  ##clean the California records of various items, including removing invalid water rights
-  h2oRights <- lapply(unique(h2oDivUseRecs$origWaterUse), function(wUse){print(wUse);
-                                                                          reorgCaliRecs(h2oDivCountyRecs[h2oDivCountyRecs$origWaterUse==wUse,], h2oDivUseRecs[h2oDivUseRecs$origWaterUse==wUse,], 
-                                                                                     h2oDivEntityRecs[h2oDivEntityRecs$origWaterUse==wUse,], h2oDivWatershedRecs[h2oDivWatershedRecs$origWaterUse==wUse,])})
-  h2oRights <- do.call(rbind.data.frame, h2oRights)
+  h2oRights <- rbind.data.frame(h2oDivCountyRecs, h2oDivUseRecs, h2oDivEntityRecs, h2oDivWatershedRecs)
+  
+  ##object which hold valid values for various fields
+  validCFSUnits <- c("Acre-feet", "Acre-feet per Year", "Cubic Feet per Second", "	Gallons", "Gallons per Day", "Gallons per Minute")
+  ##keep only those records with a valid unit type, as unable to properly convert
+  h2oRights <- h2oRights[h2oRights$CFS_units %in% validCFSUnits,]
+  
+  ##remove records without a stated basin
+  h2oRights <- h2oRights[is.na(h2oRights$basinName)==F,]
+  h2oRights <- h2oRights[h2oRights$basinName!="",]
+  
+  ##remove records without a stated source
+  h2oRights <- h2oRights[is.na(h2oRights$source)==F,]
+  
+  ##remove records without a priority date
+  h2oRights <- h2oRights[is.na(h2oRights$priorityDate)==F,]
+  h2oRights <- h2oRights[h2oRights$priorityDate!="",]
+  
+  ##convert all flow values to CFS
+  h2oRights$CFS <- as.numeric(h2oRights$CFS)
+  cfsUnits <- unique(h2oRights$CFS_units)
+  if(length(cfsUnits)>1 & cfsUnits[1]!="Cubic Feet per Second"){
+    if("Acre-feet per Year" %in% cfsUnits){
+      afyIndex <- which(h2oRights$CFS_units=="Acre-feet per Year")
+      h2oRights$CFS[afyIndex] <- acreFtYr2ft3Sec(h2oRights$CFS[afyIndex])
+    }
+    if("Gallons per Day" %in% cfsUnits){
+      gpdIndex <- which(h2oRights$CFS_units=="Gallons per Day")
+      h2oRights$CFS[gpdIndex] <- galDay2ft3Sec(h2oRights$CFS[gpdIndex])
+    }
+    if("Gallons per Minute" %in% cfsUnits){
+      gpmIndex <- which(h2oRights$CFS_units=="Gallons per Minute")
+      h2oRights$CFS[gpmIndex] <- conv_unit(h2oRights$CFS[gpmIndex], "gal_per_min", "ft3_per_sec")
+    }
+    if("Gallons" %in% cfsUnits){  ##from examining a few documents, assume per year
+      gIndex <- which(h2oRights$CFS_units=="Gallons")
+      h2oRights$CFS[gIndex] <- conv_unit(h2oRights$CFS[gIndex], "us_gal", "ft3") / 365.25
+    }
+    if("Acre-feet" %in% cfsUnits){  ##from examining a few documents, assume per year
+      afIndex <- which(h2oRights$CFS_units=="Acre-feet")
+      h2oRights$CFS[afIndex] <- acreFtYr2ft3Sec(h2oRights$CFS[afIndex])
+    }
+  }
+  
+  ##selects the first in list for each unique water right id
+  h2oRights <- filter(h2oRights, duplicated(h2oRights$waterRightID)==F)
+  h2oRights <- h2oRights[h2oRights$CFS>=0,]
+  
+  ##reclassify sources
+  gwInd <- lapply(c("GROUNDWATER", "Groundwater", "GROUND WATER"), grep, x=h2oRights$source)
+  h2oRights$source <- "SURFACE WATER"
+  h2oRights$source[unlist(gwInd)] <- "GROUND WATER"
+  
+  ##reformat date column, to be in same format as Idaho year/month/day
+  h2oRights$priorityDate <- format(as.POSIXct(h2oRights$priorityDate, format="%m/%d/%Y"), format="%Y/%m/%d")
+  
+  ##remove columns no longer needed
+  h2oRights <- h2oRights[,-c(which(colnames(h2oRights)=="CFS_units"))]
+  
+  ##make sure the coordinates are numeric
+  h2oRights$latitude <- as.numeric(h2oRights$latitude)
+  h2oRights$longitude <- as.numeric(h2oRights$longitude)
+  
   ##correct the names of a couple of WMAs
   h2oRights$basinName[which(h2oRights$basinName=="SANTA  MARIA")] <- "SANTA MARIA"
   h2oRights$basinName[which(h2oRights$basinName=="BOLSA NEUVA")] <- "BOLSA NUEVA"
   ##adds the basin id number to the data frame
   addBasinIDNums <- merge(x=h2oRights, y=wShedUnit, by="basinName")
-  ##remove duplicate rights, biasing the first record as with Idaho
-  nonDupRights <- filter(addBasinIDNums, duplicated(addBasinIDNums$waterRightID)==F)
-  nonDupRights <- nonDupRights[nonDupRights$CFS>=0,]
-  
+
   ##classifying water use categories into WBM sectors
   sectorTab <- read.csv(paste0(stateDataDir,"CA_sectorMatch.csv"))
   colnames(sectorTab)[which(colnames(sectorTab)%in%"Sector")] <- "waterUse"
@@ -442,6 +595,13 @@ if("california" %in% states){
   ##adding the water use classification to the full right record
   nonDupRights <- merge(x=nonDupRights, y=sectorTab, by.x="origWaterUse", by.y="Use", sort=F)
   setRights <- nonDupRights[,-c(which(colnames(nonDupRights) %in% c("latitude", "longitude", "state", "basinName")))]
+  
+  ##add a few more columns, for convenience
+  setRights$state <- "California"
+  setRights$FIPS <- "06"
+  ##reorganize the rights for easier readability
+  setRights <- setRights[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
+  
   wmaIDByState[[whichState]] <- as.character(unique(setRights$basinNum))
   fullRightsRecs[[whichState]] <- setRights
   ##split rights into surface and ground
@@ -450,8 +610,23 @@ if("california" %in% states){
   
   ##for the spatial object to be passed on for plotting, only include those records which will be used in the analysis
   h2oUseByState[[whichState]] <- -9999
-  h2oDivByState[[whichState]] <- SpatialPointsDataFrame(nonDupRights[,c("longitude","latitude")], data=nonDupRights[,-c(which(colnames(nonDupRights) %in% c("latitude", "longitude", "state", "basinName")))], proj4string=projProj)
-}
+  projh2oDiv <- SpatialPointsDataFrame(nonDupRights[,c("longitude","latitude")], data=nonDupRights[,-c(which(colnames(nonDupRights) %in% c("latitude", "longitude", "state", "basinName")))], proj4string=projProj)
+  h2oDivByState[[whichState]] <- projh2oDiv
+  
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(setRights, paste0(stExpDir, "caFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(setRights[setRights$source=="SURFACE WATER",], paste0(stExpDir, "caSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(setRights[setRights$source=="GROUND WATER",], paste0(stExpDir, "caGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(projh2oDiv, dsn=stExpDir, layer="caStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+  }
+} 
+
 ##Colorado
 if("colorado" %in% states){
   ##set state specific directories
@@ -466,6 +641,7 @@ if("colorado" %in% states){
   ##classifying water use categories into WBM sectors
   sectorTab <- read.csv(paste0(stateDataDir,"CO_sectorMatch.csv"))
   colnames(sectorTab)[which(colnames(sectorTab)%in%"Sector")] <- "waterUse"
+  colnames(sectorTab)[1] <- "Code"
   sectorTab <- sectorTab[,sapply(c("Code", "waterUse"), function(x){grep(x, colnames(sectorTab))})]
   
   ##water right net amounts, assumed to be equivalent to points of diversion
@@ -480,6 +656,7 @@ if("colorado" %in% states){
   ##convert acre-foot per year to CFS
   h2oRights$CFS[h2oRights$Decreed.Units=="A"] <- acreFtYr2ft3Sec(h2oRights$CFS[h2oRights$Decreed.Units=="A"])
   h2oRights <- h2oRights[,-c(which(colnames(h2oRights)=="Decreed.Units"))]
+  h2oRights <- h2oRights[h2oRights$CFS>=0,]
   ##classify water sources into ground and surface water
   h2oRights$source[grep("GROUNDWATER", h2oRights$source)] <- "GROUND WATER"
   h2oRights$source[h2oRights$source!="GROUND WATER"] <- "SURFACE WATER"
@@ -496,11 +673,20 @@ if("colorado" %in% states){
   h2oRights$UTM.Y <- as.numeric(h2oRights$UTM.Y)
 
   ##there are some duplicate water right IDs, however, they typically have differing dates and CFS, so they are being left in analysis
-  nonDupRights <- unique(h2oRights)
-  nonDupRights <- nonDupRights[nonDupRights$CFS>=0,]
+  #nonDupRights <- unique(h2oRights)
+  ##for now, for those records with multiple coordinates or different priority dates, only use the first
+  nonDupRights <- filter(as.data.frame(h2oRights), duplicated(h2oRights$waterRightID)==F)
+
   ##adding water use of the rights for later processing
   nonDupRights <- merge(x=nonDupRights, y=sectorTab, by.x="origWaterUse", by.y="Code", sort=F)
   setRights <- nonDupRights[,-c(which(colnames(nonDupRights) %in% c("Latitude", "Longitude", "UTM.X", "UTM.Y")))]
+  
+  ##add a few more columns, for convenience
+  setRights$state <- "Colorado"
+  setRights$FIPS <- "08"
+  ##reorganize the rights for easier readability
+  setRights <- setRights[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
+  
   wmaIDByState[[whichState]] <- as.character(unique(nonDupRights$basinNum))
   fullRightsRecs[[whichState]] <- setRights
   ##split rights into surface and ground
@@ -508,7 +694,7 @@ if("colorado" %in% states){
   rightsByState_surface[[whichState]] <- setRights[which(nonDupRights$source=="SURFACE WATER"),]
   
   ##there are no records with clean UTM coordinate but no geo coordinates
-  ##Due to this, just useing geo coordinates
+  ##Due to this, just using geo coordinates
   withGeo <- nonDupRights[which(is.na(nonDupRights$Latitude)==F & is.na(nonDupRights$Longitude)==F),]
   spatialRights <- SpatialPointsDataFrame(withGeo[,c("Longitude","Latitude")], data=withGeo[,-c(which(colnames(withGeo) %in% c("Longitude","Latitude","UTM.X","UTM.Y")))], proj4string=projProj)
   
@@ -519,8 +705,22 @@ if("colorado" %in% states){
   utm13SPRights <- SpatialPointsDataFrame(utm13InGeo[,c("Latitude","Longitude")], data=utm13InGeo[,-c(which(colnames(utm13InGeo) %in% c("Longitude","Latitude","UTM.X","UTM.Y")))], proj4string=CRS("+proj=utm +zone=13 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs "))  ##incorrect coordinate order
   projUTM13 <- spTransform(utm13SPRights, projProj)
   ##add the cleaned rights to the full body of spatial rights
-  h2oDivByState[[whichState]] <- rbind(spatialRights, projUTM13)
+  projh2oDiv <- rbind(spatialRights, projUTM13)
+  h2oDivByState[[whichState]] <- projh2oDiv
   h2oUseByState[[whichState]] <- -9999
+  
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(setRights, paste0(stExpDir, "coFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(setRights[setRights$source=="SURFACE WATER",], paste0(stExpDir, "coSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(setRights[setRights$source=="GROUND WATER",], paste0(stExpDir, "coGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(projh2oDiv, dsn=stExpDir, layer="coStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+  }
 }
 ##Arizona - surface records
 if("arizona" %in% states){
@@ -554,17 +754,26 @@ if("arizona" %in% states){
   azWellRWaterUse <- read.csv(paste0(wellRDir, "WELLS_WATER_USES.csv"))
   azWellRPermitA <- read.csv(paste0(wellRDir, "WELLS_PERMIT_WELL_ASSOCIATIONS.csv"))
   azWellRPermits <- read.csv(paste0(wellRDir, "WELLS_PERMITS.csv"))
+  #azWellFldProj <- read.csv(paste0(wellRDir, "WELLS_FIELD_PROJECT_SITES.csv"))
+  #azWellStatus <- read.csv(paste0(wellRDir, "WELLS_CD_WELL_STATUS.csv"))
   ##preemptively keep only the columns that are needed moving forward
   azWellRegistry <- azWellRegistry[,c("REGISTRY_I", "BASIN_NAME", "UTM_X_METE", "UTM_Y_METE")]
   azWellRWaterUse <- azWellRWaterUse[,c("WELL_REGISTRY_ID", "WUSE_CODE")]
   azWellRPermitA <- unique(azWellRPermitA[,c("WELL_REGISTRY_ID", "PT_PERMIT_NUMBER")])
   azWellRPermits <- unique(azWellRPermits[,c("PERMIT_NUMBER", "ACRE_FEET_ANNUM", "GALLONS_MINUTE", "BEGIN_DATE")])
-
+  #azWellFldProj <- unique(azWellFldProj[,c("WELL_REGISTRY_ID", "WSTAT_CODE")])
+  #azWellStatus <- unique(azWellStatus[,c("CODE", "DESCR")])
+  #getStatusCodes <- merge(x=azWellFldProj, y=azWellStatus, by.x="WSTAT_CODE", by.y="CODE")
+  #getStatusCodes <- getStatusCodes[getStatusCodes$WELL_REGISTRY_ID%in%azWellRegistry$REGISTRY_I,]
+  #mergeCodes <- merge(x=azWellRPermitA, y=getStatusCodes, by.x="WELL_REGISTRY_ID", by.y="WELL_REGISTRY_ID")
+  #aaa <- unique(mergeCodes[,c("PT_PERMIT_NUMBER", "WSTAT_CODE", "DESCR")])
+  
   ##in the permit association table, remove IDs not in spatial data
+  ##this is done as coordinates required in order to get basin ID
   azWellRPermitA <- azWellRPermitA[azWellRPermitA$WELL_REGISTRY_ID%in%azWellRegistry$REGISTRY_I,]
 
   ##remove permits without dates
-  datedOnly <-azWellRPermits[azWellRPermits$BEGIN_DATE!="",]
+  datedOnly <- azWellRPermits[azWellRPermits$BEGIN_DATE!="",]
   datedOnly$BEGIN_DATE <- sapply(strsplit(datedOnly$BEGIN_DATE, " 0:"), "[[", 1)
   ##reformat priority date, to be in same format as Idaho year/month/day
   datedOnly$BEGIN_DATE <- paste(sapply(strsplit(datedOnly$BEGIN_DATE, "/"), "[[", 3), sapply(strsplit(datedOnly$BEGIN_DATE, "/"), "[[", 1), sapply(strsplit(datedOnly$BEGIN_DATE, "/"), "[[", 2), sep="/")
@@ -591,6 +800,11 @@ if("arizona" %in% states){
   azWellRegAddUse <- merge(x=azWellRegAddAmnt, y=azWellRWaterUse, by="WELL_REGISTRY_ID")
   azWellRegConvUse <- merge(x=azWellRegAddUse, y=sectorTabWellReg, by.x="WUSE_CODE", by.y="Code")
   azWellRegAddBasin <- merge(x=azWellRegConvUse, y=groundWBasins[,c("basinName", "basinNum")], by.x="BASIN_NAME", by.y="basinName")
+  
+  ##for now, only use the first record for each water right ID
+  azWellRegAddBasin <- filter(azWellRegAddBasin, duplicated(azWellRegAddBasin$WELL_REGISTRY_ID)==F)
+  
+  ##pair down columns to only those needed
   azWellData <- azWellRegAddBasin[,c("WUSE_CODE", "WELL_REGISTRY_ID", "basinNum", "CFS", "BEGIN_DATE", "waterUse")]
   names(azWellData) <- c("origWaterUse", "waterRightID", "grdBasinNum", "CFS", "priorityDate", "waterUse")
   azWellData$source <- "GROUND WATER"
@@ -625,16 +839,19 @@ if("arizona" %in% states){
   ##read in and organize the Arizona Surface Water claims
   azSWDir <- paste0(stateDataDir, "SWR/")
   azSurFillings <- readOGR(dsn=azSWDir, layer="SWR_fillings")  ##surface water rights
-  ##remove NA uses
-  azSurFillings <- azSurFillings[which(is.na(azSurFillings$USES)==F),]
-  ##remove NA priority dates
-  azSurFillings <- azSurFillings[which(is.na(azSurFillings$PRIOR_DATE)==F),]
-  ##fill out the file number for those records in which it is missing for some reason
+  ##fill out the file number (water right ID) for those records in which it is missing for some reason
   missFileNo <- which(is.na(azSurFillings$FILE_NO)==T)
   azSurData <- azSurFillings@data
   azSurData$FILE_NO[missFileNo] <- paste0(azSurData$PROGRAM[missFileNo], "-", azSurData$APPNO[missFileNo])
+  ##remove NA uses
+  azSurData <- azSurData[which(is.na(azSurData$USES)==F),]
+  ##remove NA priority dates
+  azSurData <- azSurData[which(is.na(azSurData$PRIOR_DATE)==F),]
+  ##pairing down columns and remove duplicates
   azSurSubCols <- azSurData[,c("FILE_NO", "PRIOR_DATE", "USES","WS_DESCR", "X_UTMNAD83", "Y_UTMNAD83")]
   azSurSubCols <- unique(azSurSubCols)
+  ##for now, only use the first record for each water right ID
+  azSurSubCols <- filter(azSurSubCols, duplicated(azSurSubCols$FILE_NO)==F)
   
   ##organize the use column into multiple columns, to be able to subset by those values
   azSurUseCats <- c("STOCK", "IRRIGATION", "WILDLIFE", "DOMESTIC", "MINING", "MUNICIPAL", "POWER", "RECREATION", "INDUSTRIAL", "COMMERCIAL", "OTHER")
@@ -647,11 +864,12 @@ if("arizona" %in% states){
   surReaddUse <- surReaddUse[,-which(colnames(surReaddUse)%in%"USES")]
   ##remove records which were determined to be NA
   surReaddUse <- surReaddUse[is.na(surReaddUse$CFS)==F,]
-  ##reformate priority date, to be in same format as Idaho year/month/day
+  ##reformat priority date, to be in same format as Idaho year/month/day
   surReaddUse$PRIOR_DATE <- paste(sapply(strsplit(surReaddUse$PRIOR_DATE, "/"), "[[", 3), sapply(strsplit(surReaddUse$PRIOR_DATE, "/"), "[[", 1), sapply(strsplit(surReaddUse$PRIOR_DATE, "/"), "[[", 2), sep="/")
   
   ##due to an issue with the file extent, remakes the spatial data frame
   surReaddUse <- surReaddUse[which(surReaddUse$X_UTMNAD83>0 & surReaddUse$Y_UTMNAD83>0),]
+  #surReaddUse <- azSurSubCols[which(azSurSubCols$X_UTMNAD83>0 & azSurSubCols$Y_UTMNAD83>0),]
   newFrame <- SpatialPointsDataFrame(coords=cbind(surReaddUse$X_UTMNAD83,surReaddUse$Y_UTMNAD83), data=surReaddUse, proj4string=azSurFillings@proj4string)
   projNewFrame <- spTransform(newFrame, surfaceWSheds@proj4string@projargs)
   
@@ -700,27 +918,35 @@ if("arizona" %in% states){
   azSOCPrioDate <- read.csv(paste0(socDir, "SOC_CLAIMED_PRIORITY_DATE.csv"))
   azSOCAnnualAmt <- read.csv(paste0(socDir, "SOC_ANNUAL_AMOUNT_CLAIMED.csv"))
   azSOCCoords <- read.csv(paste0(socDir, "SOC_LOCATIONS.csv"))
-  ##preemptivly keep only the columns that are needed moving forward
+  ##preemptively keep only the columns that are needed moving forward
   azSOCMainFile <- azSOCMainFile[,c("ID", "FILE_NO", "WS")]
   azSOCClaimUse <- azSOCClaimUse[,c("MAIN_ID", "ID", "USE")]
   colnames(azSOCClaimUse)[2] <- "CU_ID" 
+  
+  ##get only the columns needed from the source table
   azSOCSource <- azSOCSource[,c("CU_ID", "CODE")]
+  
+  ##get only the columns needed from the priority date table
   azSOCPrioDate <- azSOCPrioDate[,c("CU_ID", "PRIORITY_MON", "PRIORITY_DAY", "PRIORITY_YEAR")]
+  ##cleaning of priority date format
+  ##removing those priority dates without a given year, as won't know which year to assign the dates to
   azSOCPrioDate <- azSOCPrioDate[which(is.na(azSOCPrioDate$PRIORITY_YEAR)==F),]
-  ##adding first of year, or month, if month and day are missing. this is to keep records in as summarizing on year
+  ##adding first of year, or month, if month and day are missing. this is to keep records in as summarizing the cumulative curves by year
   azSOCPrioDate$PRIORITY_MON[which(is.na(azSOCPrioDate$PRIORITY_MON)==T)] <- 1
   azSOCPrioDate$PRIORITY_DAY[which(is.na(azSOCPrioDate$PRIORITY_DAY)==T)] <- 1
-  #azSOCPrioDate$priorityDate <- format(paste0(azSOCPrioDate$PRIORITY_YEAR, "/", azSOCPrioDate$PRIORITY_MON, "/", azSOCPrioDate$PRIORITY_DAY), format="%Y/%m/%d")
+  ##formatting the year as YYYY/MM/DD, as the other states
   azSOCPrioDate$priorityDate <- paste0(azSOCPrioDate$PRIORITY_YEAR, "/", azSOCPrioDate$PRIORITY_MON, "/", azSOCPrioDate$PRIORITY_DAY)
   ##check for valid data, as some dates in data set do not exist
-  ##typically, these records are off by months not having a 31st day, but being declaired on the 31st
+  ##typically, these records are off by months not having a 31st day, but being declared on the 31st
   ##as analyzing by year, setting those dates to the last day of those months
   dateValidity <- sapply(azSOCPrioDate$priorityDate, testDate)
   whichNulls <- which(sapply(dateValidity, is.null)==T)  
   azSOCPrioDate$priorityDate[whichNulls] <- gsub("/31", "/30", azSOCPrioDate$priorityDate[whichNulls])  ##assumes last day of months
   azSOCPrioDate$priorityDate[whichNulls] <- gsub("/29", "/28", azSOCPrioDate$priorityDate[whichNulls])  ##for 2/29, assumes last day of 2, likely not leap years
   azSOCPrioDate <- azSOCPrioDate[,c("CU_ID", "priorityDate")]
+  
   ##convert flow to CFS
+  ##cleaning the CFS data
   azAmountFlow <- azSOCAnnualAmt[,c("CU_ID", "MAX_FLOW", "M_UNIT")]
   azAmountFlow <- azAmountFlow[which(is.na(azAmountFlow$MAX_FLOW)==F),]
   azAmountFlow <- azAmountFlow[which(is.na(azAmountFlow$M_UNIT)==F),]
@@ -755,6 +981,8 @@ if("arizona" %in% states){
   azAmountVol$VOLUME[azAmountVol$V_UNIT=="AFT"] <- acreFtYr2ft3Sec(azAmountVol$VOLUME[azAmountVol$V_UNIT=="AFT"])  ##Assumes that AFT is the same as AFA
   colnames(azAmountVol)[2] <- "MAX_FLOW"
   azSOCConvertAmt <- unique(rbind.data.frame(azAmountFlow[,c("CU_ID", "MAX_FLOW")], azAmountVol[,c("CU_ID", "MAX_FLOW")]))
+  
+  ##cleaning coords, as they are needed to get the WMA for the dataset
   azSOCCoords <- azSOCCoords[,c("CU_ID", "UTM_X", "UTM_Y")]
   azSOCCoords <- azSOCCoords[which(is.na(azSOCCoords$UTM_X)==F),]
   azSOCCoords <- azSOCCoords[azSOCCoords$UTM_X!=0,]
@@ -762,36 +990,50 @@ if("arizona" %in% states){
   ##average the coordinates to produce one set per CU_ID
   azSOCCoords <- merge(x=aggregate(data=azSOCCoords, UTM_X~CU_ID, FUN=mean), y=aggregate(data=azSOCCoords, UTM_Y~CU_ID, FUN=mean), by="CU_ID")
   
-  ##construct the water rights table
+  ##merge the main and water use files
   azAddClaim <- merge(x=azSOCMainFile, y=azSOCClaimUse, by.x="ID", by.y="MAIN_ID", all=F)
+  ##merge the main and water volume files
   azAddCFS <- merge(x=azAddClaim, y=azSOCConvertAmt, by="CU_ID")
+  ##merge the main and water source files
   azAddSource <- merge(x=azAddCFS, y=azSOCSource, by="CU_ID")
+  ##merge the main and priority date files
   h2oSOCRights <- merge(x=azAddSource, y=azSOCPrioDate, by="CU_ID")
-  ##preform some final data massaging to have values match other states
+  
+  ##preform some final data cleanin to have values match other states
   h2oSOCRights$CODE[h2oSOCRights$CODE=="G"] <- "GROUND WATER"
   h2oSOCRights$CODE[h2oSOCRights$CODE!="GROUND WATER"] <- "SURFACE WATER"
   colnames(h2oSOCRights)[3:7] <- c(waterRightIDFieldName, basinIDFieldName, "origWaterUse", "CFS", "source")
+  
+  ##for now, only use the first record for each water right ID
+  h2oSOCRights <- filter(h2oSOCRights, duplicated(h2oSOCRights$waterRightID)==F)
+  ##joining rights data with translated water rights code definition
   h2oSOCRights <- merge(x=h2oSOCRights, y=sectorTabSOC, by.x="origWaterUse", by.y="Code", sort=F)
-
+  names(h2oSOCRights)[which(names(h2oSOCRights)=="basinNum")] <- "surBasinNum"
+  h2oSOCRights$grdBasinNum <- NA
+  
+  ##add the geographic coordinates to have spatial object
+  ##however, as WMA basin is include it is not required for all rights
   withGeo <- merge(x=h2oSOCRights, y=azSOCCoords, by="CU_ID")
   ##remove columns that are no longer needed
   h2oSOCRights <- h2oSOCRights[,-which(colnames(h2oSOCRights) %in% c("CU_ID", "ID"))]
   withGeo <- withGeo[,-which(colnames(withGeo) %in% c("CU_ID", "ID"))]
+  ##create a spatial version of the data, to be able to extract the WMA for each right
   spatialRights <- SpatialPointsDataFrame(withGeo[,c("UTM_X","UTM_Y")], data=withGeo[,-c(which(colnames(withGeo) %in% c("UTM_X","UTM_Y")))], proj4string=CRS("+proj=utm +zone=12 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs"))
   spatialRights <- spTransform(spatialRights, projProj)
   
-  names(spatialRights)[which(names(spatialRights)=="basinNum")] <- "surBasinNum"
-  
-  spatialRights$grdBasinNum <- NA
-  
-  
-  
+  writeOGR(spatialRights, dsn=paste0(outDir, "reorganizedData/"), layer="azSpatialRights.shp", driver="ESRI Shapefile")
+
+  ##merging of the three datasets for Arizona
   fullSpRights <- rbind(spatialRights, reorderSWR, spatialWellData)
   fullSpRights <- fullSpRights[fullSpRights$CFS>=0,]
   fullRights <- fullSpRights@data
   
-  ##would need to filter our records which would be the same from the disperate data sources.
-  
+  ##add a few more columns, for convenience
+  fullRights$state <- "Arizona"
+  fullRights$FIPS <- "04"
+  ##reorganize the rights for easier readability
+  fullRights <- fullRights[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
+
   ##add the cleaned rights to the full body of spatial rights
   h2oDivByState[[whichState]] <- fullSpRights
   h2oUseByState[[whichState]] <- -9999
@@ -802,8 +1044,20 @@ if("arizona" %in% states){
   rightsByState_ground[[whichState]] <- fullRights[which(fullRights$source=="GROUND WATER"),]
   rightsByState_surface[[whichState]] <- fullRights[which(fullRights$source=="SURFACE WATER"),]
   
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(fullRights, paste0(stExpDir, "azFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(fullRights[fullRights$source=="SURFACE WATER",], paste0(stExpDir, "azSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(fullRights[fullRights$source=="GROUND WATER",], paste0(stExpDir, "azGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(fullSpRights, dsn=stExpDir, layer="azStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+  }
 }
-##nevada
+##Nevada
 if("nevada" %in% states){
   ##set state specific directories
   stateDataDir <- paste0(dataDir, "nevada/")
@@ -828,16 +1082,30 @@ if("nevada" %in% states){
   names(subH2oDiv) <- c(waterRightIDFieldName, "CFS", "priorityDate", "origWaterUse", "source", basinIDFieldName)
   ##remove NA priority dates
   subH2oDiv <- subH2oDiv[is.na(subH2oDiv$priorityDate)==F,]
+  ##double check CFS of rights is positive
+  subH2oDiv <- subH2oDiv[subH2oDiv$CFS>=0,]
   ##classify sources into ground or surface water
   subH2oDiv$source[subH2oDiv$source %in% c("UG", "OGW")] <- "GROUND WATER"
   subH2oDiv$source[subH2oDiv$source!="GROUND WATER"] <- "SURFACE WATER"
   
+  ##for now, for those records with multiple coordinates, only use the first
+  subH2oDiv <- filter(as.data.frame(subH2oDiv), duplicated(subH2oDiv$waterRightID)==F)
+  
+  ##recreate subH2oDiv as a spatial object
+  h2oRights <- SpatialPointsDataFrame(subH2oDiv[,c("coords.x1","coords.x2")], data=subH2oDiv[,-c(which(colnames(subH2oDiv) %in% c("coords.x1","coords.x2")))], proj4string=crs(h2oDiv))
+  
+  ##add a few more columns, for convenience
+  h2oRights$state <- "Nevada"
+  h2oRights$FIPS <- "32"
+  ##reorganize the rights for easier readability
+  h2oRights <- h2oRights[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
+  
   ##project the rights into the project projection
+  projRights <- spTransform(h2oRights, projProj)
   ##adding water use of the rights for later processing
-  subH2oDiv <- merge(x=subH2oDiv, y=sectorTab, by.x="origWaterUse", by.y="mou", sort=F)
-  projRights <- spTransform(subH2oDiv, projProj)
-  h2oRights <- as.data.frame(projRights)
-  h2oRights <- h2oRights[h2oRights$CFS>=0,]
+  projRights <- merge(x=projRights, y=sectorTab, by.x="origWaterUse", by.y="mou", sort=F)
+
+  h2oRights <- projRights@data
   wmaIDByState[[whichState]] <- as.character(unique(projRights$basinNum))
   ##add the cleaned rights to the full body of spatial rights
   h2oDivByState[[whichState]] <- projRights
@@ -846,6 +1114,19 @@ if("nevada" %in% states){
   fullRightsRecs[[whichState]] <- h2oRights
   rightsByState_ground[[whichState]] <- h2oRights[which(h2oRights$source=="GROUND WATER"),]
   rightsByState_surface[[whichState]] <- h2oRights[which(h2oRights$source=="SURFACE WATER"),]
+  
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(h2oRights, paste0(stExpDir, "nvFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(h2oRights[h2oRights$source=="SURFACE WATER",], paste0(stExpDir, "nvSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(h2oRights[h2oRights$source=="GROUND WATER",], paste0(stExpDir, "nvGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(projRights, dsn=stExpDir, layer="nvStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+  }
 }
 ##utah
 if("utah" %in% states){
@@ -857,12 +1138,13 @@ if("utah" %in% states){
   #h2oUse <- readOGR(paste0(stateDataDir, "Utah_Place_of_Use"), layer="Utah_Place_of_Use")  ##h2oUse does not have the data needed to be included with the points of diversion. Unlikely to be needed to be included
   ##subset the rights data to only keep the columns needed, and remove any without a valid id
   subH2oDiv  <- h2oDiv[,c("WRNUM", "TYPE", "PRIORITY", "USES", "CFS")]
-  subH2oDiv <- subH2oDiv[is.na(subH2oDiv$PRIORITY)==F,]
-  subH2oDiv <- subH2oDiv[is.na(subH2oDiv$USES)==F,]
-  #subH2oDiv <- subH2oDiv[(is.na(subH2oDiv$PRIORITY)==F & is.na(h2oDiv$USES)==F),]
   names(subH2oDiv)[1:4] <- c(waterRightIDFieldName, "source", "priorityDate", "waterCode")
+  ##clean priority dates
+  subH2oDiv <- subH2oDiv[is.na(subH2oDiv$priorityDate)==F,]
+  ##clean water uses
+  subH2oDiv <- subH2oDiv[is.na(subH2oDiv$waterCode)==F,]
   
-  ##for now remove all records that are Non Production, until get a solid answers from the aboves
+  ##for now remove all records that do not have a "-", it is how we collect the WMA ID number
   subH2oDiv <- subH2oDiv[grep("-", subH2oDiv$waterRightID),]
   subH2oDiv$basinNum <- sapply(strsplit(subH2oDiv$waterRightID, "-"), "[[", 1)
   
@@ -875,8 +1157,8 @@ if("utah" %in% states){
   subH2oDiv$priorityDate[which(holdPrioDate==709)] <- paste0(substring(subH2oDiv$priorityDate[which(holdPrioDate==709)], 5, 8), substring(subH2oDiv$priorityDate[which(holdPrioDate==709)], 1, 4))
   subH2oDiv$priorityDate[which(holdPrioDate==722)] <- paste0("19", substring(subH2oDiv$priorityDate[which(holdPrioDate==722)], 7, 8), substring(subH2oDiv$priorityDate[which(holdPrioDate==722)], 1, 4))
   ##remove 5 records which do not include a year
-  subH2oDiv <- subH2oDiv[-c(which(holdPrioDate %in% c(1,7))),]
-  ##reformate priority date, to be in same format as Idaho year/month/day
+  subH2oDiv <- subH2oDiv[-c(which(holdPrioDate %in% c(1,7))),] 
+  ##reformat priority date, to be in same format as Idaho year/month/day
   subH2oDiv$priorityDate <- paste0(substring(subH2oDiv$priorityDate, 1, 4), "/", ifelse(nchar(subH2oDiv$priorityDate)<8, "01", substring(subH2oDiv$priorityDate, 5, 6)), "/", ifelse(nchar(subH2oDiv$priorityDate)<8, "01", substring(subH2oDiv$priorityDate, 7, 8)))
   
   ##check for valid data, as some dates in data set do not exist
@@ -894,7 +1176,7 @@ if("utah" %in% states){
   ##classify sources into ground or surface water
   subH2oDiv$source[subH2oDiv$source %in% c("Underground", "Abandonded Well")] <- "GROUND WATER"
   subH2oDiv$source[subH2oDiv$source!="GROUND WATER"] <- "SURFACE WATER"
-  ##for rights with multiple uses, select the first use as the only use, as with the idaho data
+  ##for rights with multiple uses, select the first use as the only use, as with the Idaho data
   subH2oDiv$waterCode <- substr(subH2oDiv$waterCode, 1, 1)
   
   ##utah watershed units
@@ -909,18 +1191,45 @@ if("utah" %in% states){
   ##project the rights into the project projection
   ##adding water use of the rights for later processing
   subH2oDiv <- merge(x=subH2oDiv, y=sectorTab, by.x="waterCode", by.y="code", sort=F)
-  projRights <- spTransform(subH2oDiv, projProj)
-  h2oRights <- as.data.frame(projRights)
-  h2oRights <- h2oRights[h2oRights$CFS>=0,]
+  
+  ##for now, for those records with multiple coordinates, only use the first
+  subH2oDiv <- filter(as.data.frame(subH2oDiv), duplicated(subH2oDiv$waterRightID)==F)
+  ##double check CFS of rights is positive
+  subH2oDiv <- subH2oDiv[subH2oDiv$CFS>=0,]
+  
+  ##recreate subH2oDiv as a spatial object
+  h2oRights <- SpatialPointsDataFrame(subH2oDiv[,c("coords.x1","coords.x2")], data=subH2oDiv[,-c(which(colnames(subH2oDiv) %in% c("coords.x1","coords.x2")))], proj4string=crs(h2oDiv))
+  
+  ##add a few more columns, for convenience
+  h2oRights$state <- "Utah"
+  h2oRights$FIPS <- "49"
+  ##reorganize the rights for easier readability
+  h2oRights <- h2oRights[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
+  
+  projRights <- spTransform(h2oRights, projProj)
   wmaIDByState[[whichState]] <- as.character(unique(projRights$basinNum))
   ##add the cleaned rights to the full body of spatial rights
   h2oDivByState[[whichState]] <- projRights
   #h2oUseByState[[whichState]] <- NULL
   h2oUseByState[[whichState]] <- -9999
   
+  h2oRights <- projRights@data
   fullRightsRecs[[whichState]] <- h2oRights
   rightsByState_ground[[whichState]] <- h2oRights[which(h2oRights$source=="GROUND WATER"),]
   rightsByState_surface[[whichState]] <- h2oRights[which(h2oRights$source=="SURFACE WATER"),]
+  
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(h2oRights, paste0(stExpDir, "utFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(h2oRights[h2oRights$source=="SURFACE WATER",], paste0(stExpDir, "utSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(h2oRights[h2oRights$source=="GROUND WATER",], paste0(stExpDir, "utGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(projRights, dsn=stExpDir, layer="utStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+  }
 }
 ##New Mexico
 if("newMexico" %in% states){
@@ -928,8 +1237,6 @@ if("newMexico" %in% states){
   stateDataDir <- paste0(dataDir, "newmexico/")
   whichState <- which(states=="newMexico")
   plottingDim[[whichState]] <- "tall"
-  
-  h2oDiv <- readOGR(paste0(stateDataDir, "OSE_Points_of_Diversion"), layer="OSE_Points_of_Diversion")
   
   ##new mexico watershed units
   spatialWMAByState[[whichState]] <- stateWMAs[stateWMAs$state=="NewMexico",]
@@ -941,15 +1248,14 @@ if("newMexico" %in% states){
   sectorTab <- sectorTab[,c("code", "waterUse")]
   
   ##subset the rights data to only keep the columns needed, and remove any without a valid id
-  subH2oDiv <- h2oDiv[,c("pod_nbr", "pod_basin", "total_div", "use", "surface_co", "grnd_wtr_s", "start_date", "finish_dat")]
+  subH2oDiv <- h2oDiv[,c("pod_file", "pod_basin", "total_div", "use", "surface_co", "grnd_wtr_s", "start_date", "finish_dat")]
   ##adds some possible dates, for those with start dates but not finish dates
   subH2oDiv$finish_dat[is.na(subH2oDiv$finish_dat)==T] <- subH2oDiv$start_date[is.na(subH2oDiv$finish_dat)==T]
   subH2oDiv$source <- "SURFACE WATER"
   subH2oDiv$source[is.na(subH2oDiv$grnd_wtr_s)==F] <- "GROUND WATER"
+  ##clean out invalid priority dates
   subH2oDiv <- subH2oDiv[is.na(subH2oDiv$finish_dat)==F, -c(which(names(subH2oDiv) %in% c("surface_co", "grnd_wtr_s", "start_date")))]
   names(subH2oDiv) <- c(waterRightIDFieldName, basinIDFieldName, "CFS", "origWaterUse", "priorityDate", "source")
-  ##combines the basin and water number in order to keep as many records as possible, other wise more duplicates thrown out
-  subH2oDiv$waterRightID <- paste(subH2oDiv$basinNum, subH2oDiv$waterRightID, sep="-")
   ##reformat priority date, to be in same format as Idaho year/month/day
   subH2oDiv$priorityDate <- gsub("-", "/", sapply(strsplit(subH2oDiv$priorityDate, "T"), "[[", 1))
   ##convert data AFA into CFS
@@ -961,6 +1267,13 @@ if("newMexico" %in% states){
   projRights <- spTransform(subH2oDiv, projProj)
   h2oRights <- as.data.frame(projRights)
   h2oRights <- h2oRights[h2oRights$CFS>=0,]
+  
+  ##add a few more columns, for convenience
+  h2oRights$state <- "New Mexico"
+  h2oRights$FIPS <- "35"
+  ##reorganize the rights for easier readability
+  h2oRights <- h2oRights[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
+  
   wmaIDByState[[whichState]] <- as.character(unique(projRights$basinNum))
   ##add the cleaned rights to the full body of spatial rights
   h2oDivByState[[whichState]] <- projRights
@@ -969,6 +1282,19 @@ if("newMexico" %in% states){
   fullRightsRecs[[whichState]] <- h2oRights
   rightsByState_ground[[whichState]] <- h2oRights[which(h2oRights$source=="GROUND WATER"),]
   rightsByState_surface[[whichState]] <- h2oRights[which(h2oRights$source=="SURFACE WATER"),]
+  
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(h2oRights, paste0(stExpDir, "nmFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(h2oRights[h2oRights$source=="SURFACE WATER",], paste0(stExpDir, "nmSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(h2oRights[h2oRights$source=="GROUND WATER",], paste0(stExpDir, "nmGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(projRights, dsn=stExpDir, layer="nmStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+  }
 }
 ##Montana
 if("montana" %in% states){
@@ -977,10 +1303,7 @@ if("montana" %in% states){
   whichState <- which(states=="montana")
   plottingDim[[whichState]] <- "wide"
   
-  h2oDiv <- readOGR(paste0(stateDataDir, "MTWaterRights.gdb"), layer="WRDIV")
-  h2oUse <- readOGR(paste0(stateDataDir, "MTWaterRights.gdb"), layer="WRPOU")
-  
-  ##montana watershed units
+  ##Montana watershed units
   spatialWMAByState[[whichState]] <- stateWMAs[stateWMAs$state=="Montana",]
   wmaStateLabel[[whichState]] <- "Adjudication Basin"
   
@@ -995,26 +1318,42 @@ if("montana" %in% states){
   subH2oUse <- h2oUse[,c("WRNUMBER", "PURPOSE", "FLWRTCFS", "FLWRTGPM")]
   names(subH2oDiv) <- c(waterRightIDFieldName, "priorityDate", "source")
   names(subH2oUse) <- c(waterRightIDFieldName, "origWaterUse", "CFS", "GPM")
+  ##make sure that all records are unique,
+  ##note, does not filter out same IDs with different coordinates or water uses
   subH2oUse <- unique(as.data.frame(subH2oUse))
-  ##clean up some of the use records
-  subH2oUse <- subH2oUse[is.na(subH2oUse$origWaterUse)==F,]
-  subH2oUse <- subH2oUse[(is.na(subH2oUse$CFS)==F | is.na(subH2oUse$GPM)==F),]
+  
   ##for now, for those records with multiple uses, only use the first
   subH2oUse <- filter(subH2oUse, duplicated(subH2oUse$waterRightID)==F)
-  ##if CFS is not available, convert GPM to CFS
-  gpmAvail <- which(is.na(subH2oUse$CFS)==T & is.na(subH2oUse$GPM)==F)
-  subH2oUse$CFS[gpmAvail] <- conv_unit(subH2oUse$GPM[gpmAvail], "gal_per_min", "ft3_per_sec")
-  subH2oUse <- subH2oUse[,-which(names(subH2oUse)=="GPM")]
+  ##for now, for those records with multiple coordinates, only use the first
+  subH2oDiv <- filter(as.data.frame(subH2oDiv), duplicated(subH2oDiv$waterRightID)==F)
   
-  ##clean up the div records
-  subH2oDiv <- subH2oDiv[is.na(subH2oDiv$priorityDate)==F,]
-  subH2oDiv$priorityDate <- gsub("-", "/", subH2oDiv$priorityDate, "[[", 1)
-  subH2oDiv <- subH2oDiv[is.na(subH2oDiv$source)==F,]
-  subH2oDiv$source[subH2oDiv$source=="GROUNDWATER"] <- "GROUND WATER"
-  subH2oDiv$source[subH2oDiv$source!="GROUND WATER"] <- "SURFACE WATER"
-  
-  ##merge the div and use data, only keeping common
+  ##as the records from div and use do not have enough information to be included on their own,
+  ##remove water right ids that are not included in the other object
+  subH2oUse <- subH2oUse[which(subH2oUse$waterRightID %in% unique(subH2oDiv$waterRightID)),]
+  subH2oDiv <- subH2oDiv[which(subH2oDiv$waterRightID %in% unique(subH2oUse$waterRightID)),]
+  ##merge the div and use data
   h2oRights <- merge(x=subH2oDiv, y=subH2oUse, by=waterRightIDFieldName, all=F)
+  
+  ##clean up water use
+  h2oRights <- h2oRights[is.na(h2oRights$origWaterUse)==F,]
+  ##clean up water volume/flow
+  h2oRights <- h2oRights[(is.na(h2oRights$CFS)==F | is.na(h2oRights$GPM)==F),]
+  ##if CFS is not available, convert GPM to CFS
+  gpmAvail <- which(is.na(h2oRights$CFS)==T & is.na(h2oRights$GPM)==F)
+  h2oRights$CFS[gpmAvail] <- conv_unit(h2oRights$GPM[gpmAvail], "gal_per_min", "ft3_per_sec")
+  ##remove the GPM column
+  h2oRights <- h2oRights[,-which(names(h2oRights)=="GPM")]
+  ##clean up priority dates
+  h2oRights <- h2oRights[is.na(h2oRights$priorityDate)==F,]
+  h2oRights$priorityDate <- gsub("-", "/", h2oRights$priorityDate, "[[", 1)
+  ##clean up water source
+  h2oRights <- h2oRights[is.na(h2oRights$source)==F,]
+  h2oRights$source[h2oRights$source=="GROUNDWATER"] <- "GROUND WATER"
+  h2oRights$source[h2oRights$source!="GROUND WATER"] <- "SURFACE WATER"
+  
+  ##recreate h2oRights as a spatial object
+  h2oRights <- SpatialPointsDataFrame(h2oRights[,c("coords.x1","coords.x2")], data=h2oRights[,-c(which(colnames(h2oRights) %in% c("coords.x1","coords.x2")))], proj4string=crs(h2oDiv))
+  
   ##adding water use of the rights for later processing
   h2oRights <- merge(x=h2oRights, y=sectorTab, by.x="origWaterUse", by.y="Purpose", sort=F)
   ##project the rights into the project projection
@@ -1022,6 +1361,13 @@ if("montana" %in% states){
   projRights$basinNum <- sapply(strsplit(projRights$waterRightID, " "), "[[", 1)
   fullRights <- as.data.frame(projRights)
   fullRights <- fullRights[fullRights$CFS>=0,]
+  
+  ##add a few more columns, for convenience
+  fullRights$state <- "Montana"
+  fullRights$FIPS <- "30"
+  ##reorganize the rights for easier readability
+  fullRights <- fullRights[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
+  
   wmaIDByState[[whichState]] <- as.character(unique(projRights$basinNum))
   ##add the cleaned rights to the full body of spatial rights
   h2oDivByState[[whichState]] <- projRights
@@ -1030,6 +1376,19 @@ if("montana" %in% states){
   fullRightsRecs[[whichState]] <- fullRights
   rightsByState_ground[[whichState]] <- fullRights[which(fullRights$source=="GROUND WATER"),]
   rightsByState_surface[[whichState]] <- fullRights[which(fullRights$source=="SURFACE WATER"),]
+  
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(fullRights, paste0(stExpDir, "mtFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(fullRights[fullRights$source=="SURFACE WATER",], paste0(stExpDir, "mtSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(fullRights[fullRights$source=="GROUND WATER",], paste0(stExpDir, "mtGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(projRights, dsn=stExpDir, layer="mtStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+  }
 }
 ##Wyoming
 if("wyoming" %in% states){
@@ -1041,11 +1400,13 @@ if("wyoming" %in% states){
   ##read in the water rights data
   rightsFiles <- list.files(stateDataDir, "All_POD_WaterRight_Search_Results.csv", full.names=T, recursive=T)
   h2oDivs <- pblapply(rightsFiles, function(nam){tab<-read.csv(nam);
+                                                #subTab<-tab[,c("WR.Number", "Total.Flow.CFS...Appropriation.GPM.", "PriorityDate", "Uses", "Facility.type", "SummaryWRStatus", "Longitude", "Latitude")];
                                                 subTab<-tab[,c("WR.Number", "Total.Flow.CFS...Appropriation.GPM.", "PriorityDate", "Uses", "Facility.type", "Longitude", "Latitude")];
                                                 splitFile <- strsplit(nam, "/")[[1]]
                                                 subTab$basinNum <- paste(gsub("div", "",  splitFile[grep("div", splitFile)]), gsub("dist", "",  splitFile[grep("dist", splitFile)]), sep="_")
                                                 return(subTab)})
   h2oDivs <- do.call(rbind.data.frame, h2oDivs)
+  ##Update basin number to a correct value
   h2oDivs$basinNum[h2oDivs$basinNum=="1_15"] <- "1_15-5"
   
   ##cleans the water right data
@@ -1059,7 +1420,7 @@ if("wyoming" %in% states){
   
   h2oDivs <- h2oDivs[h2oDivs$priorityDate!="",]
   h2oDivs <- h2oDivs[h2oDivs$origWaterUse!="",]
-  ##reformate priority date, to be in same format as Idaho year/month/day
+  ##reformat priority date, to be in same format as Idaho year/month/day
   h2oDivs$priorityDate <- paste0(sapply(strsplit(h2oDivs$priorityDate, "/"), "[[", 3), "/", sapply(strsplit(h2oDivs$priorityDate, "/"), "[[", 1), "/", sapply(strsplit(h2oDivs$priorityDate, "/"), "[[", 2))
   ##for records with multiple water uses, select the first use
   h2oDivs$origWaterUse <- sapply(strsplit(h2oDivs$origWaterUse, ";"), "[[", 1)
@@ -1071,7 +1432,7 @@ if("wyoming" %in% states){
   ##remove duplicated rights, biasing the first records as with Idaho
   h2oRights <- filter(h2oDivs, duplicated(h2oDivs$waterRightID)==F)
   
-  ##wyoming watershed units
+  ##Wyoming watershed units
   spatialWMAByState[[whichState]] <- stateWMAs[stateWMAs$state=="Wyoming",]
   wmaStateLabel[[whichState]] <- "Water Districts"
   
@@ -1079,26 +1440,50 @@ if("wyoming" %in% states){
   sectorTab <- read.csv(paste0(stateDataDir,"WY_sectorMatch.csv"))
   colnames(sectorTab)[which(colnames(sectorTab)%in%"Sector")] <- "waterUse"
   colnames(sectorTab)[1] <- "Code"
-  sectorTab <- sectorTab[,c("Code", "waterUse")]
+  sectorTab <- unique(sectorTab[,c("Code", "waterUse")]) ##remove copies, to correct duplicates accidentally kept in sector match file
   
   ##adding water use of the rights for later processing
   h2oRights$origWaterUse <- str_trim(h2oRights$origWaterUse)
   h2oRights <- unique(merge(x=h2oRights, y=sectorTab, by.x="origWaterUse", by.y="Code", sort=F))
-  h2oRights <- h2oRights[h2oRights$CFS>=0,]
+  
+  ##add a few more columns, for convenience
+  fullRights$state <- "Wyoming"
+  fullRights$FIPS <- "56"
+  ##reorganize the rights for easier readability
+  fullRights <- fullRights[,c("state", "FIPS", "waterRightID", "priorityDate", "origWaterUse", "waterUse", "source", "basinNum", "CFS")]
   
   wmaIDByState[[whichState]] <- as.character(unique(h2oRights$basinNum))
   ##add the cleaned rights to the full body of spatial rights
   spRights <- h2oRights[-c(which(is.na(h2oRights$Longitude)==T | is.na(h2oRights$Latitude)==T)),]
-  h2oDivByState[[whichState]] <- SpatialPointsDataFrame(spRights[,c("Longitude","Latitude")], data=spRights[,-c(which(colnames(spRights) %in% c("Latitude", "Longitude")))], proj4string=projProj)
+  projRights <- SpatialPointsDataFrame(spRights[,c("Longitude","Latitude")], data=spRights[,-c(which(colnames(spRights) %in% c("Latitude", "Longitude")))], proj4string=projProj)
+  h2oDivByState[[whichState]] <- projRights
   h2oUseByState[[whichState]] <- -9999
   
   fullRightsRecs[[whichState]] <- h2oRights
   rightsByState_ground[[whichState]] <- h2oRights[which(h2oRights$source=="GROUND WATER"),]
   rightsByState_surface[[whichState]] <- h2oRights[which(h2oRights$source=="SURFACE WATER"),]
+  
+  ##export harmonized data
+  if(exportWrite==T){
+    stExpDir <- stateExpDirs[whichState]
+    ##write out full rights
+    write.csv(h2oRights, paste0(stExpDir, "mtFullHarmonizedRights.csv"), row.names=F)
+    ##write out surface rights
+    write.csv(h2oRights[h2oRights$source=="SURFACE WATER",], paste0(stExpDir, "mtSurfaceWaterHarmonizedRights.csv"), row.names=F)
+    ##write out groundwater rights
+    write.csv(h2oRights[h2oRights$source=="GROUND WATER",], paste0(stExpDir, "mtGroundwaterHarmonizedRights.csv"), row.names=F)
+    ##write out spatial PODS
+    writeOGR(projRights, dsn=stExpDir, layer="mtStatePOD", driver="ESRI Shapefile", overwrite_layer=T)
+  }
 }
 
 ##saving the created output objects to disk
 save(file=paste0(outDir, "reorganizedData/stateWaterRightsHarmonized.RData"), "rightsByState_ground", "rightsByState_surface", "projProj", "wmaStateLabel", 
      "h2oUseByState", "h2oDivByState", "spatialWMAByState", "wmaIDByState", "fullRightsRecs", "states", "plottingDim")
+
+
+##########################################################################
+##########################################################################
+
 
 
